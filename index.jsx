@@ -289,15 +289,12 @@ fontWeight:confirmClear?600:400,cursor:"pointer",whiteSpace:"nowrap",padding:"4p
 {confirmClear ? "Confirm clear" : "Clear form"}
 </button>
 </div>
-<p style={{ fontSize: 13, color: "#717171", margin: 0, lineHeight: 1.5 }}>
-{AMENITIES.length} amenity codes, plus property types, superhost, and other params Airbnb doesn't fully expose.
-</p>
 </div>
 
 <Section title="Location">
 <input type="text" placeholder="e.g. Catskills--New-York or United-States"
 value={location} onChange={e => setLocation(e.target.value)} style={inputStyle} />
-<p style={hintStyle}>Match the format Airbnb uses in its URLs. Dashes for spaces, double dashes for commas. Pasting a full Airbnb search URL works too.</p>
+<p style={hintStyle}>Match the format Airbnb uses in its URLs. Pasting a full Airbnb search URL works too.</p>
 </Section>
 
 <Section title={<span>Dates{summary && <span style={{fontWeight:400,fontSize:13,color:"#717171",marginLeft:8}}>{summary}</span>}</span>}>
@@ -377,19 +374,19 @@ Superhosts only
 </Section>
 
 <Section title="Category tags">
-<p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}>
+{/* <p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}>
 Airbnb's knowledge graph categories (removed from UI in 2025, but the URL parameter <code style={{fontSize:11,background:"#f0f0f0",padding:"1px 4px",borderRadius:3}}>kg_and_tags[]=Tag:ID</code> still works). {CATEGORY_TAGS.length} IDs verified against Airbnb's own pages — hover a pill for its source.
-</p>
+</p> */}
 <PillGrid items={CATEGORY_TAG_ITEMS} selected={parsedCategoryTags.valid} toggle={toggleCategoryTag} />
 <div style={{marginTop:12}}>
 <label style={labelStyle}>Tag IDs</label>
 <input type="text" placeholder="Enter tag IDs separated by commas, e.g. 8175"
 value={categoryTags} onChange={e => setCategoryTags(e.target.value)} style={inputStyle} />
 <RejectedTokens tokens={parsedCategoryTags.invalid} />
-<p style={hintStyle}>
+{/* <p style={hintStyle}>
 Airbnb ignores an ID it doesn't recognise — the search runs unfiltered rather than
 failing, so a wrong ID looks the same as no filter at all.
-</p>
+</p> */}
 </div>
 <details style={{marginTop:14}}>
 <summary style={{fontSize:12,color:"#717171",cursor:"pointer",userSelect:"none"}}>

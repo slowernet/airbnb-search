@@ -627,3 +627,112 @@ export const PROPERTY_TYPES = [
 export const VISIBLE_IDS = new Set([1,4,5,7,8,9,12,25,30,33,34,47,51]);
 // VISIBLE_IDS are the only amenity codes Airbnb exposes in its own filter UI.
 // Everything else is a hidden filter, which is the reason this tool exists.
+
+// One-click amenity codes, surfaced above the category accordion. All hidden filters
+// — none appear in VISIBLE_IDS — which is the point of promoting them.
+export const FAVORITE_AMENITIES = [181, 510, 180, 223];
+
+// Knowledge-graph category tags, emitted as kg_and_tags[]=Tag:ID. Airbnb dropped the
+// category strip from its UI in 2025 but the parameter still works.
+//
+// Every `source` is the page the id was read from — see docs/category-tags.md for the
+// extraction method and for why unverified ids must never be added here: Airbnb
+// silently ignores an unrecognized tag, so a wrong id is indistinguishable from no
+// filter at all. Verified 2026-07-28.
+export const CATEGORY_TAGS = [
+  { id: 8159, name: "Barns", source: "/united-states/stays/barns" },
+  { id: 789, name: "Beachfront", source: "/united-states/stays/beachfront" },
+  { id: 1073, name: "Boats", source: "/united-states/stays/boats" },
+  { id: 8166, name: "Campers", source: "/london-united-kingdom/stays/rvs" },
+  { id: 634, name: "Camping", source: "/italy/stays/campsites" },
+  { id: 8232, name: "Casas Particulares", source: "/cuba/stays/casas-particulares" },
+  { id: 8047, name: "Castles", source: "/united-states/stays/castles" },
+  { id: 670, name: "Caves", source: "/united-states/stays/caves" },
+  { id: 8157, name: "Containers", source: "/spain/stays/shipping-containers" },
+  { id: 8227, name: "Cycladic Homes", source: "/greece/stays/cycladic-houses" },
+  { id: 8173, name: "Domes", source: "/united-states/stays/domes" },
+  { id: 8174, name: "Earth Homes", source: "/majorca-spain/stays/earth-houses" },
+  { id: 8175, name: "Farms", source: "/italy/stays/farmstays" },
+  { id: 8176, name: "Houseboats", source: "/united-states/stays/houseboats" },
+  { id: 675, name: "Islands", source: "/united-states/stays/islands" },
+  { id: 8253, name: "Luxe", source: "/london-united-kingdom/stays/luxury" },
+  { id: 8230, name: "Minsus", source: "/taiwan/stays/minsus" },
+  { id: 8255, name: "Riads", source: "/morocco/stays/riads" },
+  { id: 8228, name: "Ryokans", source: "/japan/stays/ryokans" },
+  { id: 681, name: "Ski-in/out", source: "/united-states/stays/ski-in-ski-out" },
+  { id: 8186, name: "Tiny Homes", source: "/london-united-kingdom/stays/tiny-houses" },
+  { id: 8187, name: "Towers", source: "/united-states/stays/towers" },
+  { id: 8188, name: "Treehouses", source: "/united-states/stays/treehouses" },
+  { id: 8229, name: "Trulli", source: "/italy/stays/trulli" },
+  { id: 8043, name: "Windmills", source: "/france/stays/windmills" },
+  { id: 8192, name: "Yurts", source: "/united-states/stays/yurts" },
+];
+
+// The `property_type_id[]` taxonomy — a separate, finer-grained parameter from the
+// `l2_property_type_ids[]` in PROPERTY_TYPES above. THE ID SPACES ARE DIFFERENT: 4 is
+// Hotel in l2 and Cabin here. Never mix them.
+//
+// Recovered by sweeping ids 1-100 against a live search and reading the dominant
+// listing title; the parameter is self-labeling because a valid id returns listings
+// whose titles are the property type. Ids above 69 are all invalid. `purity` is the
+// fraction of returned listings carrying that title — anything below ~0.8, or drawn
+// from few listings, is a weaker reading and flagged. See docs/category-tags.md.
+export const PROPERTY_TYPE_IDS = [
+  { id: 1, name: "Apartment" },
+  { id: 2, name: "Home" },
+  { id: 3, name: "Room", weak: "purity 0.78" },
+  { id: 4, name: "Cabin" },
+  { id: 5, name: "Castle" },
+  { id: 6, name: "Treehouse" },
+  { id: 8, name: "Boat" },
+  { id: 10, name: "Lighthouse" },
+  { id: 11, name: "Villa" },
+  { id: 12, name: "Ice dome", weak: "only 4 listings" },
+  { id: 15, name: "Yurt" },
+  { id: 16, name: "Tent", weak: "shares its label with 34" },
+  { id: 17, name: "Dome" },
+  { id: 18, name: "Cave" },
+  { id: 19, name: "Island" },
+  { id: 22, name: "Chalet" },
+  { id: 23, name: "Earthen home" },
+  { id: 24, name: "Hut" },
+  { id: 25, name: "Train" },
+  { id: 28, name: "Plane", weak: "only 6 listings" },
+  { id: 34, name: "Tent", weak: "shares its label with 16" },
+  { id: 35, name: "Loft" },
+  { id: 36, name: "Townhouse" },
+  { id: 37, name: "Condo" },
+  { id: 38, name: "Bungalow" },
+  { id: 40, name: "Guesthouse" },
+  { id: 42, name: "Room", weak: "purity 0.50" },
+  { id: 43, name: "Boutique hotel", weak: "purity 0.79" },
+  { id: 44, name: "Nature lodge", weak: "purity 0.76" },
+  { id: 45, name: "Hostel", weak: "purity 0.54" },
+  { id: 47, name: "Apartment", weak: "shares its label with 1" },
+  { id: 48, name: "Minsu", weak: "only 4 listings" },
+  { id: 51, name: "Room", weak: "only 4 listings" },
+  { id: 53, name: "Guest suite" },
+  { id: 54, name: "Casa particular" },
+  { id: 57, name: "Barn" },
+  { id: 58, name: "Campsite" },
+  { id: 60, name: "Cottage" },
+  { id: 61, name: "Cycladic home", weak: "only 7 listings" },
+  { id: 62, name: "Dammuso", weak: "only 2 listings" },
+  { id: 63, name: "Farm stay" },
+  { id: 64, name: "Houseboat" },
+  { id: 65, name: "Resort", weak: "purity 0.69" },
+  { id: 67, name: "Tiny home" },
+  { id: 68, name: "Trullo", weak: "only 2 listings" },
+  { id: 69, name: "Windmill" },
+];
+
+// Categories Airbnb still names but for which no tag id could be recovered. Rendered
+// as disabled pills so the UI shows what exists without offering a control that would
+// silently do nothing. See docs/category-tags.md for what was tried.
+export const UNMAPPED_CATEGORIES = [
+  "A-Frames", "Amazing Pools", "Amazing Views", "Arctic", "Beach", "Bed & Breakfasts",
+  "Cabins", "Chalets", "Chef's Kitchens", "Countryside", "Creative Spaces", "Dammusos",
+  "Desert", "Design", "Golfing", "Grand Pianos", "Historical Homes", "Iconic Cities",
+  "Kezhans", "Lake", "Lakefront", "Mansions", "National Parks", "Off-the-grid", "OMG!",
+  "Shared Homes", "Shepherd's Huts", "Skiing", "Surfing", "Tropical", "Vineyards",
+];

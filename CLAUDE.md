@@ -25,7 +25,11 @@ a URL string.
 
 - `main.jsx` — three-line entry point; mounts the default export of `index.jsx`.
 - `searchUrl.js` — all URL construction and validation, as pure functions. No React.
-- `searchUrl.test.js` — the only test file; covers `searchUrl.js` exhaustively.
+- `storage.js` — localStorage persistence. `DEFAULTS` is the single source of truth
+  for the persisted field list, the initial state, and what "Clear form" resets to,
+  so those three can't drift. Add a field there when adding one to the form.
+- `searchUrl.test.js`, `storage.test.js` — the test files, covering the two pure
+  modules.
 - `amenities.js` — the static code tables.
 - `index.jsx` — the `AirbnbUrlBuilder` component, small presentational helpers
   (`Section`, `Labeled`, `ChipRow`, `RejectedTokens`), and shared style objects.
@@ -99,6 +103,21 @@ The check-in picker floors at today and check-out at check-in + 1 night. Moving
 check-in past an existing check-out shifts check-out along and preserves the trip
 length; moving it *earlier* leaves check-out alone, since that just extends the stay.
 
+### Persistence
+
+The form is written to localStorage after **every render** — `saveForm` runs in a
+`useEffect` with no dependency array. That is deliberate: a hand-listed array over
+nineteen fields is how a save silently stops covering a newly added field, and the
+write is far cheaper than the render that preceded it.
+
+`loadForm` type-checks every stored value against its default and falls back when
+they disagree. localStorage is user-editable and older builds leave older shapes
+behind; a `roomTypes` that isn't an array crashes the first render on `.includes`.
+
+There is no `clearForm`. Resetting writes `DEFAULTS` through the normal save path,
+and stored defaults load identically to no entry — so deleting the key would be
+undone by the next save and only appear to work.
+
 ### Amenity selection
 
 Chip selections and hand-entered custom codes are merged into one deduped
@@ -123,13 +142,26 @@ All of these live in `amenities.js`.
 - `VISIBLE_IDS` — the small set of amenity IDs Airbnb actually exposes in its own UI.
   Everything else is a "hidden" filter, marked with a red dot and surfaced in the
   `(N hidden)` count. This distinction is the app's reason to exist.
-- `PROPERTY_TYPES` values are `l2_property_type_ids`; `kg_and_tags[]=Tag:ID` are
-  knowledge-graph category tags Airbnb removed from its UI in April 2025 but still
-  honors. Only ID 8175 (Farms) is confirmed; the rest of the names are listed in the
-  UI as un-mapped.
+- `CATEGORY_TAGS` — 26 `kg_and_tags[]=Tag:ID` categories. Airbnb dropped the category
+  strip from its UI in 2025 but the parameter still works. Every row carries the
+  `source` page its id was read from; keep that invariant when adding entries.
+- `UNMAPPED_CATEGORIES` — categories Airbnb names but exposes no id for. Rendered as
+  disabled pills so the UI shows what exists without offering a dead control.
+- **Two property-type parameters, and they must never be mixed.** `PROPERTY_TYPES`
+  holds `l2_property_type_ids[]` — Airbnb's own four groupings, complete.
+  `PROPERTY_TYPE_IDS` holds `property_type_id[]` — a separate 46-entry taxonomy.
+  **`4` is Hotel in the first and Cabin in the second.** They live in distinct form
+  fields (`l2PropertyTypes`, `propertyTypeIds`) precisely so a value cannot leak
+  between them; a test asserts both emit independently.
 
 These IDs are reverse-engineered from Airbnb's URLs, not a published API. Do not
-invent IDs — an unverified code silently returns zero results.
+invent one: an unrecognized value is **silently ignored** — the search runs unfiltered
+rather than erroring or returning nothing, so a wrong id is indistinguishable from no
+filter. Note the contrast with a *valid* id matching nothing, which returns zero
+results. Empty means the filter worked; a full generic page means the id was rejected.
+
+`docs/category-tags.md` records how every id was recovered and how to re-verify them
+when Airbnb changes things. Read it before adding ids or trusting a third-party list.
 
 ## Deployment
 

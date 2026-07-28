@@ -201,7 +201,7 @@ Clear dates
 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
 <Labeled label="Min bedrooms"><input type="number" min={0} max={ROOM_MAX} value={minBedrooms} onChange={e=>setMinBedrooms(e.target.value)} style={inputStyle}/></Labeled>
 <Labeled label="Min beds"><input type="number" min={0} max={ROOM_MAX} value={minBeds} onChange={e=>setMinBeds(e.target.value)} style={inputStyle}/></Labeled>
-<Labeled label="Min bathrooms"><input type="number" min={0} max={ROOM_MAX} value={minBathrooms} onChange={e=>setMinBathrooms(e.target.value)} style={inputStyle}/></Labeled>
+<Labeled label="Min bathrooms"><input type="number" min={0} max={ROOM_MAX} step={0.5} value={minBathrooms} onChange={e=>setMinBathrooms(e.target.value)} style={inputStyle}/></Labeled>
 </div>
 </Section>
 

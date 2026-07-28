@@ -53,21 +53,31 @@ or switching to `URLSearchParams` will produce URLs Airbnb rejects.
 
 Two rules the param helpers enforce, both of which were bugs before:
 
-- **Only positive whole numbers reach the URL.** HTML `min`/`max` attributes do not
+- **Only positive numbers reach the URL.** HTML `min`/`max` attributes do not
   constrain typed or pasted input, and a value held as a string makes `"0"` truthy.
-  Guard with the module-private `positiveInt`, never with a bare truthiness check.
-  The exported `clampInt` is the matching guard at the input boundary, used by the
-  guest steppers so the field shows the clamped value.
+  Guard with `positiveInt` or `positiveNumber`, never with a bare truthiness check.
+  Counts you can't have half of (guests, bedrooms, beds) use `positiveInt`; bathrooms
+  and prices use `positiveNumber`, because half-baths are ubiquitous on Airbnb and an
+  integers-only guard silently dropped them. The exported `clampInt` is the matching
+  guard at the input boundary, used by the guest steppers so the field shows the
+  clamped value.
 - **Malformed input is reported, not truncated.** `parseCodes` returns rejected
   tokens alongside valid ones because `parseInt` silently turns `"12abc"` into `12`.
-  `RejectedTokens` renders them; don't drop input on the floor.
+  `RejectedTokens` renders them; don't drop input on the floor. The same applies to
+  the free-text number fields: `NUMERIC_FIELDS` pairs each with the parser
+  `buildSearchUrl` actually applies, so a warning can't drift from what reaches the
+  URL. Add a field there when you add one to the form.
 
 `validateSearch` handles cross-field problems (inverted date or price ranges) that
 produce a syntactically valid but dead URL. These warn rather than block — the user
 is explicitly in control of the URL being built.
 
 `normalizeLocation` also recovers the slug from a pasted Airbnb search URL, since the
-field's own hint tells users to mimic Airbnb's URL format.
+field's own hint tells users to mimic Airbnb's URL format. It parses with `new URL()`
+rather than a regex: the host must match `AIRBNB_HOST` (a prefix check let
+`airbnb.com.evil.example` through), and the segment after `/s/` must not be in
+`RESERVED_SLUGS`, since `/s/<location>/homes` means a location-less search URL puts
+the literal `homes` exactly where a location would go.
 
 ### Dates
 
@@ -78,6 +88,8 @@ rather than memoized so a tab left open overnight doesn't keep yesterday's floor
 
 `addDays` and `nightsBetween` do their arithmetic in UTC so a DST transition can't
 shift a result by a day, even though the dates themselves are local calendar dates.
+`addDays` returns `null` outside 4-digit years, where `toISOString()` switches to
+expanded form (`+010000-01-01`) and slicing it yields a corrupt date.
 
 `validateSearch` takes `today` as an injected parameter so it stays pure; tests pin
 it to a constant rather than reading the clock. Date assertions that depend on the

@@ -15,12 +15,24 @@ export const clampInt = (raw, min, max) => {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
 };
 
-// Whole number > 0, clamped to max. Everything else is null so the caller can omit
-// the param entirely. Deliberately stricter than parseInt, which accepts "12abc" as
-// 12 and "1e3" as 1 — both silently wrong filters.
+// Both return null for anything unusable so the caller can omit the param entirely.
+// Deliberately stricter than parseInt, which accepts "12abc" as 12 and "1e3" as 1 —
+// both silently wrong filters.
+//
+// Counts of things you can't have half of use positiveInt. Bathrooms and prices use
+// positiveNumber: half-baths are ubiquitous on Airbnb and $99.99 is an ordinary way
+// to type a price, and rejecting them silently drops a filter the user can still see
+// in the field.
 function positiveInt(value, max = Number.MAX_SAFE_INTEGER) {
   const s = String(value ?? "").trim();
   if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return n > 0 ? Math.min(n, max) : null;
+}
+
+function positiveNumber(value, max = Number.MAX_SAFE_INTEGER) {
+  const s = String(value ?? "").trim();
+  if (!/^\d+(?:\.\d+)?$/.test(s)) return null;
   const n = Number(s);
   return n > 0 ? Math.min(n, max) : null;
 }
@@ -48,7 +60,12 @@ export function addDays(date, days) {
   const iso = isoDate(date);
   if (!iso) return null;
   const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  const result = new Date(Date.UTC(y, m - 1, d + days));
+  // Outside 4-digit years toISOString() switches to expanded form (+010000-01-01),
+  // and slicing that yields a corrupt date the date input silently discards.
+  const year = result.getUTCFullYear();
+  if (year < 0 || year > 9999) return null;
+  return result.toISOString().slice(0, 10);
 }
 
 export function nightsBetween(checkin, checkout) {
@@ -60,19 +77,47 @@ export function nightsBetween(checkin, checkout) {
   return nights > 0 ? nights : null;
 }
 
+// Anchored so a lookalike host can't pass: `airbnb\.[^/]+` would have matched
+// airbnb.com.evil.example. Covers airbnb.com, airbnb.co.uk, airbnb.com.au.
+const AIRBNB_HOST = /^(?:www\.)?airbnb\.(?:[a-z]{2,}\.)?[a-z]{2,}$/i;
+
+// `/s/<location>/homes` is the format, so the segment after /s/ is only a location
+// when it isn't one of the literals Airbnb puts there for a location-less search.
+// Without this, pasting .../s/homes?adults=2 yields the "location" `homes`.
+const RESERVED_SLUGS = new Set(["homes", "all", "experiences", "plus", "stays"]);
+
 // The location hint tells users to mimic Airbnb's own URL format, so pasting a whole
 // search URL is a predictable move. Recover the slug instead of encoding a URL into
 // the middle of another URL.
 export function normalizeLocation(raw) {
   let s = String(raw ?? "").trim();
-  const pasted = s.match(/^https?:\/\/(?:www\.)?airbnb\.[^/]+\/s\/([^/?#]+)/i);
-  if (pasted) {
+
+  if (/^https?:\/\//i.test(s)) {
+    let url = null;
     try {
-      s = decodeURIComponent(pasted[1]);
+      url = new URL(s);
     } catch {
-      s = pasted[1]; // malformed percent-escape; keep the raw slug
+      url = null; // unparseable; fall through and treat the input as literal text
+    }
+    const [root, slug = ""] = url ? url.pathname.split("/").filter(Boolean) : [];
+    if (url && AIRBNB_HOST.test(url.hostname) && root === "s") {
+      // An Airbnb search URL carrying no usable location resolves to empty, which
+      // leaves the app showing its "enter a location" prompt rather than building a
+      // URL around a junk slug.
+      if (RESERVED_SLUGS.has(slug.toLowerCase())) {
+        s = "";
+      } else {
+        // Scoped tightly: a malformed escape must cost us the decode, not the URL
+        // parse we already succeeded at.
+        try {
+          s = decodeURIComponent(slug);
+        } catch {
+          s = slug;
+        }
+      }
     }
   }
+
   return s.trim().replace(/\s+/g, "-");
 }
 
@@ -88,6 +133,17 @@ export function parseCodes(raw) {
   }
   return { valid: [...valid], invalid };
 }
+
+// The free-text number fields, paired with the parser buildSearchUrl applies to each
+// so the warning can't drift from what actually reaches the URL. Guest counts are
+// absent because clampInt already normalizes them at the input.
+const NUMERIC_FIELDS = [
+  ["minBedrooms", "Min bedrooms", positiveInt],
+  ["minBeds", "Min beds", positiveInt],
+  ["minBathrooms", "Min bathrooms", positiveNumber],
+  ["priceMin", "Min price", positiveNumber],
+  ["priceMax", "Max price", positiveNumber],
+];
 
 // Cross-field problems that produce a syntactically fine but dead URL. These warn
 // rather than block: the user is explicitly in control of the URL being built.
@@ -111,10 +167,21 @@ export function validateSearch(form, today = todayISO()) {
     warnings.push("Check-out is on or before check-in — a stay must be at least one night.");
   }
 
-  const priceMin = positiveInt(form.priceMin);
-  const priceMax = positiveInt(form.priceMax);
+  const priceMin = positiveNumber(form.priceMin);
+  const priceMax = positiveNumber(form.priceMax);
   if (priceMin && priceMax && priceMin > priceMax) {
     warnings.push("Min price is above max price — this search returns no listings.");
+  }
+
+  // A number field holding something unusable drops its param silently, and the
+  // field goes on displaying the value. Say so, the way RejectedTokens does for
+  // amenity codes. Zero is exempt: it means "no minimum" and omitting it is right.
+  for (const [key, label, parse] of NUMERIC_FIELDS) {
+    const raw = String(form[key] ?? "").trim();
+    if (!raw || Number(raw) === 0) continue;
+    if (parse(raw) === null) {
+      warnings.push(`${label} isn't a positive ${parse === positiveInt ? "whole number" : "number"} — that filter was left out.`);
+    }
   }
 
   return warnings;
@@ -126,8 +193,8 @@ export function buildSearchUrl(form) {
 
   const params = [];
   const push = (key, value) => params.push(`${key}=${value}`);
-  const pushIfPositive = (key, value, max) => {
-    const n = positiveInt(value, max);
+  const pushIfPositive = (key, value, max, parse = positiveInt) => {
+    const n = parse(value, max);
     if (n !== null) push(key, n);
   };
 
@@ -144,7 +211,7 @@ export function buildSearchUrl(form) {
 
   pushIfPositive("min_bedrooms", form.minBedrooms, ROOM_MAX);
   pushIfPositive("min_beds", form.minBeds, ROOM_MAX);
-  pushIfPositive("min_bathrooms", form.minBathrooms, ROOM_MAX);
+  pushIfPositive("min_bathrooms", form.minBathrooms, ROOM_MAX, positiveNumber);
 
   for (const id of form.propertyTypes ?? []) push("l2_property_type_ids%5B%5D", id);
   for (const id of form.amenityCodes ?? []) push("amenities%5B%5D", id);
@@ -153,8 +220,8 @@ export function buildSearchUrl(form) {
 
   for (const id of form.categoryTags ?? []) push("kg_and_tags%5B%5D", `Tag%3A${id}`);
 
-  pushIfPositive("price_min", form.priceMin);
-  pushIfPositive("price_max", form.priceMax);
+  pushIfPositive("price_min", form.priceMin, undefined, positiveNumber);
+  pushIfPositive("price_max", form.priceMax, undefined, positiveNumber);
 
   const base = `${SEARCH_BASE}${encodeURIComponent(location)}/homes`;
   return params.length > 0 ? `${base}?${params.join("&")}` : base;

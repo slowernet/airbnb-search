@@ -20,6 +20,26 @@ describe("normalizeLocation", () => {
   it("recovers the slug from a pasted search URL", () => {
     expect(normalizeLocation("https://www.airbnb.com/s/Paris/homes?adults=2")).toBe("Paris");
   });
+  it("accepts Airbnb's country domains", () => {
+    expect(normalizeLocation("https://www.airbnb.co.uk/s/London/homes")).toBe("London");
+    expect(normalizeLocation("http://airbnb.com.au/s/Sydney/homes")).toBe("Sydney");
+  });
+  // `/s/<location>/homes` is the format, so a location-less search URL puts a literal
+  // there. Reading it as a place name produced .../s/homes/homes.
+  it("does not mistake a reserved path segment for a location", () => {
+    expect(normalizeLocation("https://www.airbnb.com/s/homes?adults=2")).toBe("");
+    expect(normalizeLocation("https://www.airbnb.com/s/all?adults=2")).toBe("");
+    expect(normalizeLocation("https://www.airbnb.com/s/")).toBe("");
+  });
+  it("rejects lookalike hosts rather than trusting the prefix", () => {
+    const evil = "https://www.airbnb.com.evil.example/s/Paris/homes";
+    expect(normalizeLocation(evil)).not.toBe("Paris");
+    expect(normalizeLocation("https://www.notairbnb.com/s/Paris/homes")).not.toBe("Paris");
+  });
+  it("leaves non-Airbnb URLs and plain text as literal input", () => {
+    expect(normalizeLocation("Isla de Ometepe")).toBe("Isla-de-Ometepe");
+    expect(normalizeLocation("http://[not a url")).toBe("http://[not-a-url");
+  });
   it("decodes percent-escapes in a pasted slug", () => {
     expect(normalizeLocation("https://www.airbnb.com/s/Z%C3%BCrich/homes")).toBe("Zürich");
   });
@@ -66,8 +86,25 @@ describe("buildSearchUrl", () => {
       .toEqual(["adults=16", "infants=5", "min_bedrooms=16"]);
   });
 
-  it("rejects non-integer numeric input rather than truncating it", () => {
-    expect(params({ minBedrooms: "2.7", priceMin: "1e3", priceMax: "12abc" })).toEqual([]);
+  it("rejects non-integer input for counts you can't have half of", () => {
+    expect(params({ minBedrooms: "2.7", minBeds: "1.5", adults: 2.5 })).toEqual([]);
+  });
+
+  // Regression: an earlier integers-only guard silently dropped these, and half-baths
+  // are ubiquitous on Airbnb.
+  it("keeps fractional bathrooms and prices", () => {
+    expect(params({ minBathrooms: "2.5" })).toEqual(["min_bathrooms=2.5"]);
+    expect(params({ priceMin: "99.99", priceMax: "250.50" }))
+      .toEqual(["price_min=99.99", "price_max=250.5"]);
+  });
+
+  it("still rejects malformed numerics in the fractional fields", () => {
+    expect(params({ minBathrooms: "2.5.1", priceMin: "1e3", priceMax: "12abc" })).toEqual([]);
+    expect(params({ minBathrooms: "-2.5" })).toEqual([]);
+  });
+
+  it("clamps a fractional bathroom count to the room maximum", () => {
+    expect(params({ minBathrooms: "99.5" })).toEqual(["min_bathrooms=16"]);
   });
 
   it("has no upper bound on price", () => {
@@ -159,6 +196,11 @@ describe("addDays", () => {
     expect(addDays("", 1)).toBe(null);
     expect(addDays("2026-02-30", 1)).toBe(null);
   });
+  // Past year 9999 toISOString() switches to +010000-01-01 and slicing corrupts it.
+  it("returns null rather than a corrupt string outside 4-digit years", () => {
+    expect(addDays("9999-12-31", 1)).toBe(null);
+    expect(addDays("9999-12-30", 1)).toBe("9999-12-31");
+  });
 });
 
 describe("nightsBetween", () => {
@@ -207,6 +249,27 @@ describe("validateSearch", () => {
   });
   it("defaults to the real today when none is injected", () => {
     expect(validateSearch({ checkin: "2020-01-01" })).toHaveLength(1);
+  });
+
+  // A number field that drops its param goes on displaying the value, so silence
+  // reads as "applied".
+  it("reports a number field whose value never reaches the URL", () => {
+    expect(validateSearch({ minBedrooms: "1e3" }, TODAY)).toEqual([
+      "Min bedrooms isn't a positive whole number — that filter was left out.",
+    ]);
+    expect(validateSearch({ minBathrooms: "2.5.1" }, TODAY)).toEqual([
+      "Min bathrooms isn't a positive number — that filter was left out.",
+    ]);
+    expect(validateSearch({ minBeds: "-3" }, TODAY)).toHaveLength(1);
+  });
+  it("stays quiet for values that legitimately reach the URL", () => {
+    expect(validateSearch({ minBedrooms: "2", minBathrooms: "2.5", priceMin: "99.99" }, TODAY)).toEqual([]);
+  });
+  it("treats zero as 'no minimum' rather than an error", () => {
+    expect(validateSearch({ minBedrooms: "0", priceMin: "0" }, TODAY)).toEqual([]);
+  });
+  it("does not warn about an empty field", () => {
+    expect(validateSearch({ minBedrooms: "", minBathrooms: "  " }, TODAY)).toEqual([]);
   });
 });
 

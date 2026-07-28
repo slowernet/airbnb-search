@@ -3,7 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Airbnb Search</title>
+
+    <title>Airbnb Advanced Search Builder — Hidden Search Filters</title>
+    <meta name="description" content="Airbnb's own UI exposes 13 of its 585 amenity filters. Build search URLs using all of them, plus 26 verified category tags and 46 property types. Free, no signup." />
+    <link rel="canonical" href="https://slowernet.github.io/airbnb-search/" />
+    <meta name="theme-color" content="#FF5A5F" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://slowernet.github.io/airbnb-search/" />
+    <meta property="og:title" content="Airbnb Advanced Search Builder" />
+    <meta property="og:description" content="Airbnb's own UI exposes 13 of its 585 amenity filters. Build search URLs using all of them, plus 26 verified category tags and 46 property types." />
+    <meta name="twitter:card" content="summary" />
+
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23FF5A5F'/><circle cx='14' cy='14' r='6' fill='none' stroke='white' stroke-width='2.5'/><line x1='18.5' y1='18.5' x2='24' y2='24' stroke='white' stroke-width='2.5' stroke-linecap='round'/></svg>" />
 
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-XE6S1LET6P"></script>
     <script>
@@ -19,6 +31,55 @@
     </style>
   </head>
   <body>
+    <!--
+      The app is client-rendered, so without this block the served HTML contains no
+      content at all. Search crawlers and LLM crawlers that don't execute JavaScript
+      read <noscript>, so this is the only description of the tool they ever see.
+      Keep it factual and in sync with the app.
+    -->
+    <noscript>
+      <div style="max-width: 720px; margin: 0 auto; padding: 24px 16px; color: #222">
+        <h1>Airbnb Advanced Search Builder</h1>
+        <p>
+          Airbnb supports far more search filters than its interface offers. Of roughly
+          585 amenity codes, only 13 appear in Airbnb's own filter panel; the rest work
+          only if you write them into the URL by hand. This tool builds those URLs.
+        </p>
+        <p>It covers:</p>
+        <ul>
+          <li>585 amenity codes, marking which 13 Airbnb exposes itself</li>
+          <li>26 knowledge-graph category tags (Treehouses, Castles, Windmills, Farms and more), each verified against Airbnb's own pages</li>
+          <li>46 specific property types, plus Airbnb's four top-level groupings</li>
+          <li>Dates with one-click stay lengths, guests, price and room minimums, and superhost</li>
+        </ul>
+        <p>
+          It runs entirely in your browser, sends nothing to a server, and needs no
+          account. Enable JavaScript to use it.
+        </p>
+      </div>
+    </noscript>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Airbnb Advanced Search Builder",
+        "url": "https://slowernet.github.io/airbnb-search/",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "description": "Builds Airbnb search URLs using filters Airbnb does not expose in its own interface, including 585 amenity codes, 26 verified category tags and 46 property types.",
+        "featureList": [
+          "585 Airbnb amenity filter codes",
+          "26 verified knowledge-graph category tags",
+          "46 property types",
+          "One-click stay lengths for weekly and monthly stays",
+          "Runs entirely client-side with no account required"
+        ]
+      }
+    </script>
+
     <div id="root"></div>
     <script type="module" src="/main.jsx"></script>
   </body>

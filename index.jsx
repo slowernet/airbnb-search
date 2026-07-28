@@ -333,7 +333,7 @@ Clear dates
 </div>
 </Section>
 
-<Section title="Room type">
+<Section title="Room type" startsCluster>
 <ChipRow items={ROOM_TYPES} selected={roomTypes} toggle={v => toggleSet(v, roomTypes, setRoomTypes)} />
 </Section>
 
@@ -373,7 +373,7 @@ Superhosts only
 </label>
 </Section>
 
-<Section title="Category tags">
+<Section title="Category tags" startsCluster>
 {/* <p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}>
 Airbnb's knowledge graph categories (removed from UI in 2025, but the URL parameter <code style={{fontSize:11,background:"#f0f0f0",padding:"1px 4px",borderRadius:3}}>kg_and_tags[]=Tag:ID</code> still works). {CATEGORY_TAGS.length} IDs verified against Airbnb's own pages — hover a pill for its source.
 </p> */}
@@ -496,8 +496,21 @@ Enter a location above to generate the search URL.
 );
 }
 
-function Section({title,children}) {
-return <div style={{marginBottom:20}}><h2 style={{fontSize:14,fontWeight:600,color:"#222",margin:"0 0 10px 0"}}>{title}</h2>{children}</div>;
+// Spacing follows the internal-vs-external rule: a heading binds to its own content
+// at 8px, sections separate at 32px, and the three conceptual clusters — trip basics,
+// property character, hidden filters — separate at 56px. The old 10/20 pair was only
+// a 2:1 ratio, which left a heading barely more attached to what it labelled than to
+// the section above it.
+//
+// CLUSTER_GAP has to exceed SECTION_GAP outright: adjacent sibling margins collapse to
+// the larger of the two rather than summing, so anything under 32 here does nothing at
+// all and fails silently.
+const SECTION_GAP = 32;
+const CLUSTER_GAP = 56;
+
+function Section({title,startsCluster,children}) {
+return <div style={{marginBottom:SECTION_GAP, marginTop:startsCluster ? CLUSTER_GAP : undefined}}>
+<h2 style={{fontSize:14,fontWeight:600,color:"#222",margin:"0 0 8px 0"}}>{title}</h2>{children}</div>;
 }
 function Labeled({label,children}) {
 return <div style={{flex:1}}><label style={labelStyle}>{label}</label>{children}</div>;

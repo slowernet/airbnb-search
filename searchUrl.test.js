@@ -141,6 +141,29 @@ describe("buildSearchUrl", () => {
       .toEqual(["property_type_id%5B%5D=4", "property_type_id%5B%5D=22", "property_type_id%5B%5D=69"]);
   });
 
+  // Array params reach buildSearchUrl from localStorage, which is user-editable and
+  // may hold an older build's shape. Unguarded, one element injects extra parameters.
+  it("rejects array elements that would inject parameters", () => {
+    expect(params({ amenityCodes: ["1&superhost=true&adults=99"] })).toEqual([]);
+    expect(params({ categoryTags: ["1#"] })).toEqual([]);
+    expect(params({ roomTypes: ["a&b=c"] })).toEqual([]);
+    expect(params({ roomTypes: ["<script>"] })).toEqual([]);
+  });
+
+  it("rejects non-numeric array elements", () => {
+    expect(params({ amenityCodes: ["abc", null, -5, 0, {}] })).toEqual([]);
+    expect(params({ propertyTypeIds: [{}, undefined, "2.5"] })).toEqual([]);
+    expect(params({ l2PropertyTypes: ["abc"] })).toEqual([]);
+  });
+
+  it("still accepts the real values the UI produces", () => {
+    expect(params({ roomTypes: ["Entire%20home%2Fapt", "Private%20room"] }))
+      .toEqual(["room_types%5B%5D=Entire%20home%2Fapt", "room_types%5B%5D=Private%20room"]);
+    expect(params({ amenityCodes: [4, 181], categoryTags: [8175], propertyTypeIds: [4] }))
+      .toEqual(["property_type_id%5B%5D=4", "amenities%5B%5D=4", "amenities%5B%5D=181",
+                "kg_and_tags%5B%5D=Tag%3A8175"]);
+  });
+
   it("emits superhost only when true", () => {
     expect(params({ superhost: false })).toEqual([]);
     expect(params({ superhost: true })).toEqual(["superhost=true"]);

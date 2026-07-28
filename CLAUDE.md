@@ -65,6 +65,11 @@ Two rules the param helpers enforce, both of which were bugs before:
   integers-only guard silently dropped them. The exported `clampInt` is the matching
   guard at the input boundary, used by the guest steppers so the field shows the
   clamped value.
+- **Array params are guarded element by element, not just as containers.** They load
+  from localStorage, so an unguarded element injects parameters — `"1&superhost=true"`
+  becomes two of them. Numeric arrays go through `positiveInt`; `roomTypes` values are
+  pre-encoded strings so they go through `SAFE_TOKEN`, which rejects anything carrying
+  URL structure.
 - **Malformed input is reported, not truncated.** `parseCodes` returns rejected
   tokens alongside valid ones because `parseInt` silently turns `"12abc"` into `12`.
   `RejectedTokens` renders them; don't drop input on the floor. The same applies to

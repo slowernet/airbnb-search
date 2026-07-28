@@ -35,10 +35,13 @@ const PROPERTY_TYPE_ITEMS = (() => {
   }));
 })();
 
-const FAVORITE_ITEMS = FAVORITE_AMENITIES.map(id => {
-  const a = AMENITIES.find(x => x.id === id);
-  return { value: id, label: a.name, title: `amenities[]=${id} — ${a.cat}` };
-});
+// filter(Boolean) before the lookup is dereferenced: this runs at module scope, so an
+// id that isn't in AMENITIES would throw before React mounts and leave a blank page
+// rather than merely dropping one pill.
+const FAVORITE_ITEMS = FAVORITE_AMENITIES
+  .map(id => AMENITIES.find(x => x.id === id))
+  .filter(Boolean)
+  .map(a => ({ value: a.id, label: a.name, title: `amenities[]=${a.id} — ${a.cat}` }));
 
 const UNMAPPED_ITEMS = UNMAPPED_CATEGORIES.map(name => ({
   value: `unmapped:${name}`,
@@ -96,9 +99,16 @@ selectedAmenities: [...selectedAmenities], customCodes, categoryTags,
 
 // Deliberately no dependency array. A hand-listed one over nineteen fields is exactly
 // how a save silently stops covering a newly added field; running after every render
-// cannot drift. A stringify of this object is far cheaper than the render that
-// preceded it.
-useEffect(() => { saveForm(persisted); });
+// cannot drift. The serialised snapshot is compared instead, which skips the renders
+// that don't touch persisted state — amenity search, category expansion, the copy
+// button — without a debounce, and so without a window where an edit is unsaved.
+const lastSaved = useRef(null);
+useEffect(() => {
+const snapshot = JSON.stringify(persisted);
+if (snapshot === lastSaved.current) return;
+lastSaved.current = snapshot;
+saveForm(persisted);
+});
 
 const resetForm = () => {
 setLocation(DEFAULTS.location);

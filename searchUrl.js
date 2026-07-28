@@ -7,6 +7,11 @@
 const SEARCH_BASE = "https://www.airbnb.com/s/";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// room_types values ship pre-encoded from the data table, so they can't be checked
+// numerically. This rejects anything carrying URL structure — &, #, ?, = — which is
+// what an injected parameter needs.
+const SAFE_TOKEN = /^[A-Za-z0-9%._-]+$/;
+
 export const GUEST_LIMITS = { adults: 16, children: 16, infants: 5, pets: 5 };
 export const ROOM_MAX = 16;
 
@@ -264,7 +269,13 @@ export function buildSearchUrl(form) {
     pushIfPositive(key, form[key], GUEST_LIMITS[key]);
   }
 
-  for (const roomType of form.roomTypes ?? []) push("room_types%5B%5D", roomType);
+  // Array params were the one place values reached the URL unguarded. That was safe
+  // while they could only come from clicked controls, but they now load from
+  // localStorage, which is user-editable and may hold an older build's shape. An
+  // unguarded element injects parameters: "1&superhost=true" becomes two of them.
+  for (const roomType of form.roomTypes ?? []) {
+    if (SAFE_TOKEN.test(String(roomType))) push("room_types%5B%5D", roomType);
+  }
 
   pushIfPositive("min_bedrooms", form.minBedrooms, ROOM_MAX);
   pushIfPositive("min_beds", form.minBeds, ROOM_MAX);
@@ -273,13 +284,16 @@ export function buildSearchUrl(form) {
   // Two separate taxonomies with overlapping ids and different meanings — 4 is Hotel
   // in l2_property_type_ids and Cabin in property_type_id. They are kept in distinct
   // form fields so a value can never leak from one into the other.
-  for (const id of form.l2PropertyTypes ?? []) push("l2_property_type_ids%5B%5D", id);
-  for (const id of form.propertyTypeIds ?? []) push("property_type_id%5B%5D", id);
-  for (const id of form.amenityCodes ?? []) push("amenities%5B%5D", id);
+  for (const id of form.l2PropertyTypes ?? []) pushIfPositive("l2_property_type_ids%5B%5D", id);
+  for (const id of form.propertyTypeIds ?? []) pushIfPositive("property_type_id%5B%5D", id);
+  for (const id of form.amenityCodes ?? []) pushIfPositive("amenities%5B%5D", id);
 
   if (form.superhost) push("superhost", "true");
 
-  for (const id of form.categoryTags ?? []) push("kg_and_tags%5B%5D", `Tag%3A${id}`);
+  for (const id of form.categoryTags ?? []) {
+    const n = positiveInt(id);
+    if (n !== null) push("kg_and_tags%5B%5D", `Tag%3A${n}`);
+  }
 
   pushIfPositive("price_min", form.priceMin, undefined, positiveNumber);
   pushIfPositive("price_max", form.priceMax, undefined, positiveNumber);

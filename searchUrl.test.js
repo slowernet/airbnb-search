@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   buildSearchUrl, validateSearch, parseCodes, normalizeLocation, clampInt,
-  todayISO, addDays, nightsBetween,
+  todayISO, addDays, addMonths, nightsBetween, staySummary,
+  applyStayPreset, matchingStayPreset, STAY_PRESETS,
 } from "./searchUrl.js";
+
+const preset = (label) => STAY_PRESETS.find((p) => p.label === label);
 
 // Pinned so these assertions don't start failing once the real clock passes them.
 const TODAY = "2026-07-28";
@@ -63,7 +66,7 @@ describe("buildSearchUrl", () => {
   });
 
   it("leaves pre-encoded param fragments alone", () => {
-    expect(params({ roomTypes: ["Entire%20home%2Fapt"], propertyTypes: ["1"], categoryTags: [8175] }))
+    expect(params({ roomTypes: ["Entire%20home%2Fapt"], l2PropertyTypes: ["1"], categoryTags: [8175] }))
       .toEqual(["room_types%5B%5D=Entire%20home%2Fapt", "l2_property_type_ids%5B%5D=1", "kg_and_tags%5B%5D=Tag%3A8175"]);
   });
 
@@ -124,6 +127,43 @@ describe("buildSearchUrl", () => {
       .toEqual(["amenities%5B%5D=4", "amenities%5B%5D=1", "amenities%5B%5D=47"]);
   });
 
+  // Two taxonomies, overlapping ids, different meanings: 4 is Hotel in one and Cabin
+  // in the other. A value must never leak between them.
+  it("keeps the two property-type parameters separate", () => {
+    expect(params({ l2PropertyTypes: ["4"] })).toEqual(["l2_property_type_ids%5B%5D=4"]);
+    expect(params({ propertyTypeIds: [4] })).toEqual(["property_type_id%5B%5D=4"]);
+    expect(params({ l2PropertyTypes: ["4"], propertyTypeIds: [22] }))
+      .toEqual(["l2_property_type_ids%5B%5D=4", "property_type_id%5B%5D=22"]);
+  });
+
+  it("emits every selected property type id", () => {
+    expect(params({ propertyTypeIds: [4, 22, 69] }))
+      .toEqual(["property_type_id%5B%5D=4", "property_type_id%5B%5D=22", "property_type_id%5B%5D=69"]);
+  });
+
+  // Array params reach buildSearchUrl from localStorage, which is user-editable and
+  // may hold an older build's shape. Unguarded, one element injects extra parameters.
+  it("rejects array elements that would inject parameters", () => {
+    expect(params({ amenityCodes: ["1&superhost=true&adults=99"] })).toEqual([]);
+    expect(params({ categoryTags: ["1#"] })).toEqual([]);
+    expect(params({ roomTypes: ["a&b=c"] })).toEqual([]);
+    expect(params({ roomTypes: ["<script>"] })).toEqual([]);
+  });
+
+  it("rejects non-numeric array elements", () => {
+    expect(params({ amenityCodes: ["abc", null, -5, 0, {}] })).toEqual([]);
+    expect(params({ propertyTypeIds: [{}, undefined, "2.5"] })).toEqual([]);
+    expect(params({ l2PropertyTypes: ["abc"] })).toEqual([]);
+  });
+
+  it("still accepts the real values the UI produces", () => {
+    expect(params({ roomTypes: ["Entire%20home%2Fapt", "Private%20room"] }))
+      .toEqual(["room_types%5B%5D=Entire%20home%2Fapt", "room_types%5B%5D=Private%20room"]);
+    expect(params({ amenityCodes: [4, 181], categoryTags: [8175], propertyTypeIds: [4] }))
+      .toEqual(["property_type_id%5B%5D=4", "amenities%5B%5D=4", "amenities%5B%5D=181",
+                "kg_and_tags%5B%5D=Tag%3A8175"]);
+  });
+
   it("emits superhost only when true", () => {
     expect(params({ superhost: false })).toEqual([]);
     expect(params({ superhost: true })).toEqual(["superhost=true"]);
@@ -137,7 +177,7 @@ describe("buildSearchUrl", () => {
     expect(buildSearchUrl({
       location: "Catskills--New-York", checkin: "2026-08-01", checkout: "2026-08-05",
       adults: 2, pets: 1, roomTypes: ["Entire%20home%2Fapt"], minBedrooms: "2",
-      propertyTypes: ["1"], amenityCodes: [7, 25], superhost: true,
+      l2PropertyTypes: ["1"], amenityCodes: [7, 25], superhost: true,
       categoryTags: [8175], priceMin: "100", priceMax: "400",
     })).toBe(
       "https://www.airbnb.com/s/Catskills--New-York/homes" +
@@ -200,6 +240,109 @@ describe("addDays", () => {
   it("returns null rather than a corrupt string outside 4-digit years", () => {
     expect(addDays("9999-12-31", 1)).toBe(null);
     expect(addDays("9999-12-30", 1)).toBe("9999-12-31");
+  });
+});
+
+describe("addMonths", () => {
+  it("lands on the same day of the next month", () => {
+    expect(addMonths("2026-08-01", 1)).toBe("2026-09-01");
+    expect(addMonths("2026-08-15", 3)).toBe("2026-11-15");
+  });
+  it("rolls over the year", () => {
+    expect(addMonths("2026-11-15", 3)).toBe("2027-02-15");
+    expect(addMonths("2026-12-31", 1)).toBe("2027-01-31");
+  });
+  // Naive Date.UTC(y, m+1, 31) rolls Jan 31 forward to Mar 3.
+  it("clamps to the last day when the target month is shorter", () => {
+    expect(addMonths("2026-01-31", 1)).toBe("2026-02-28");
+    expect(addMonths("2026-03-31", 1)).toBe("2026-04-30");
+    expect(addMonths("2026-08-31", 6)).toBe("2027-02-28");
+  });
+  it("clamps to Feb 29 in a leap year", () => {
+    expect(addMonths("2028-01-31", 1)).toBe("2028-02-29");
+  });
+  it("returns null for an unusable date", () => {
+    expect(addMonths("", 1)).toBe(null);
+    expect(addMonths("2026-02-30", 1)).toBe(null);
+  });
+  it("returns null rather than a corrupt string outside 4-digit years", () => {
+    expect(addMonths("9999-12-01", 1)).toBe(null);
+  });
+});
+
+describe("stay presets", () => {
+  it("applies weeks as exact night counts", () => {
+    expect(applyStayPreset("2026-08-01", preset("1 week"))).toBe("2026-08-08");
+    expect(applyStayPreset("2026-08-01", preset("2 weeks"))).toBe("2026-08-15");
+  });
+  it("applies months as calendar months", () => {
+    expect(applyStayPreset("2026-08-01", preset("1 month"))).toBe("2026-09-01");
+    expect(applyStayPreset("2026-01-31", preset("1 month"))).toBe("2026-02-28");
+    expect(applyStayPreset("2026-08-01", preset("3 months"))).toBe("2026-11-01");
+  });
+  it("gives a month different night counts depending on the month", () => {
+    expect(nightsBetween("2026-08-01", applyStayPreset("2026-08-01", preset("1 month")))).toBe(31);
+    expect(nightsBetween("2026-02-01", applyStayPreset("2026-02-01", preset("1 month")))).toBe(28);
+  });
+  // Matters because Airbnb's monthly pricing and installment billing start at 28
+  // nights (airbnb.com/help/article/1233, /2584). The shortest calendar month is
+  // exactly 28, so month presets always reach it — including the clamped Jan 31 ->
+  // Feb 28 case, which lands on the boundary rather than under it.
+  it("never produces a month shorter than 28 nights", () => {
+    const starts = ["2026-01-31", "2026-02-01", "2026-08-01", "2028-01-31"];
+    for (const p of STAY_PRESETS.filter((x) => x.months)) {
+      for (const start of starts) {
+        expect(nightsBetween(start, applyStayPreset(start, p))).toBeGreaterThanOrEqual(28);
+      }
+    }
+  });
+  it("returns null for an unusable check-in", () => {
+    expect(applyStayPreset("", preset("1 month"))).toBe(null);
+    expect(applyStayPreset("2026-08-01", null)).toBe(null);
+  });
+
+  it("recognises a range that matches a preset", () => {
+    expect(matchingStayPreset("2026-08-01", "2026-09-01")).toBe(preset("1 month"));
+    expect(matchingStayPreset("2026-08-01", "2026-08-08")).toBe(preset("1 week"));
+    // Clamped month-ends still round-trip.
+    expect(matchingStayPreset("2026-01-31", "2026-02-28")).toBe(preset("1 month"));
+  });
+  it("returns null for a range that matches nothing", () => {
+    expect(matchingStayPreset("2026-08-01", "2026-08-20")).toBe(null);
+    expect(matchingStayPreset("2026-08-01", "")).toBe(null);
+    expect(matchingStayPreset("", "2026-09-01")).toBe(null);
+  });
+  // 28 nights from Feb 1 is exactly Mar 1, which is also "1 month" from Feb 1.
+  // The first match wins, and weeks are listed first, so check it stays unambiguous.
+  it("does not report a 4-week range as a month", () => {
+    expect(matchingStayPreset("2026-02-01", "2026-03-01")).toBe(preset("1 month"));
+  });
+});
+
+describe("staySummary", () => {
+  // A preset's night count varies with the calendar, so printing one of the four
+  // possible numbers reads as canonical when it isn't.
+  it("names the preset instead of a night count", () => {
+    expect(staySummary("2026-08-01", "2026-09-01")).toBe("1 month · monthly stay");
+    expect(staySummary("2026-02-01", "2026-03-01")).toBe("1 month · monthly stay");
+    expect(staySummary("2026-08-01", "2026-11-01")).toBe("3 months · monthly stay");
+  });
+  it("falls back to a night count for a hand-picked range", () => {
+    expect(staySummary("2026-08-01", "2026-08-20")).toBe("19 nights");
+    expect(staySummary("2026-08-01", "2026-08-02")).toBe("1 night");
+  });
+  // The designation follows stay length, not whether a preset was used.
+  it("flags a hand-picked range that reaches the threshold", () => {
+    expect(staySummary("2026-08-01", "2026-08-29")).toBe("28 nights · monthly stay");
+    expect(staySummary("2026-08-01", "2026-08-28")).toBe("27 nights");
+  });
+  it("says nothing without a usable range", () => {
+    expect(staySummary("2026-08-01", "")).toBe(null);
+    expect(staySummary("2026-08-05", "2026-08-01")).toBe(null);
+  });
+  it("weeks stay under the threshold and are labelled plainly", () => {
+    expect(staySummary("2026-08-01", "2026-08-08")).toBe("1 week");
+    expect(staySummary("2026-08-01", "2026-08-15")).toBe("2 weeks");
   });
 });
 

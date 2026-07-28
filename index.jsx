@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { AMENITIES, CATEGORIES, ROOM_TYPES, PROPERTY_TYPES, VISIBLE_IDS } from "./amenities.js";
+import {
+  AMENITIES, CATEGORIES, ROOM_TYPES, PROPERTY_TYPES, VISIBLE_IDS,
+  CATEGORY_TAGS, UNMAPPED_CATEGORIES, PROPERTY_TYPE_IDS, FAVORITE_AMENITIES,
+} from "./amenities.js";
 import {
   buildSearchUrl,
   validateSearch,
@@ -8,36 +11,141 @@ import {
   todayISO,
   addDays,
   nightsBetween,
+  applyStayPreset,
+  matchingStayPreset,
+  staySummary,
+  STAY_PRESETS,
   GUEST_LIMITS,
   ROOM_MAX,
 } from "./searchUrl.js";
+import { loadForm, saveForm, DEFAULTS } from "./storage.js";
+
+// Read once, before the first render, so every field can initialise from it.
+const restored = loadForm();
+
+// Several ids share a display title (Apartment 1 and 47, Room 3/42/51, Tent 16/34).
+// Showing two identical pills would be unusable, so duplicates carry their id.
+const PROPERTY_TYPE_ITEMS = (() => {
+  const seen = {};
+  for (const p of PROPERTY_TYPE_IDS) seen[p.name] = (seen[p.name] ?? 0) + 1;
+  return PROPERTY_TYPE_IDS.map(p => ({
+    value: p.id,
+    label: seen[p.name] > 1 ? `${p.name} (${p.id})` : p.name,
+    title: `property_type_id[]=${p.id}${p.weak ? ` — weaker reading: ${p.weak}` : ""}`,
+  }));
+})();
+
+// filter(Boolean) before the lookup is dereferenced: this runs at module scope, so an
+// id that isn't in AMENITIES would throw before React mounts and leave a blank page
+// rather than merely dropping one pill.
+const FAVORITE_ITEMS = FAVORITE_AMENITIES
+  .map(id => AMENITIES.find(x => x.id === id))
+  .filter(Boolean)
+  .map(a => ({ value: a.id, label: a.name, title: `amenities[]=${a.id} — ${a.cat}` }));
+
+const UNMAPPED_ITEMS = UNMAPPED_CATEGORIES.map(name => ({
+  value: `unmapped:${name}`,
+  label: name,
+  disabled: true,
+  title: "Airbnb lists this category but no tag id could be recovered for it",
+}));
+
+const CATEGORY_TAG_ITEMS = CATEGORY_TAGS.map(t => ({
+  value: t.id,
+  label: t.name,
+  title: `kg_and_tags[]=Tag:${t.id} — verified from ${t.source}`,
+}));
 
 export default function AirbnbUrlBuilder() {
-const [location, setLocation] = useState("");
-const [checkin, setCheckin] = useState("");
-const [checkout, setCheckout] = useState("");
-const [adults, setAdults] = useState(1);
-const [children, setChildren] = useState(0);
-const [infants, setInfants] = useState(0);
-const [pets, setPets] = useState(0);
-const [roomTypes, setRoomTypes] = useState([]);
-const [propertyTypes, setPropertyTypes] = useState([]);
-const [priceMin, setPriceMin] = useState("");
-const [priceMax, setPriceMax] = useState("");
-const [minBedrooms, setMinBedrooms] = useState("");
-const [minBeds, setMinBeds] = useState("");
-const [minBathrooms, setMinBathrooms] = useState("");
-const [superhost, setSuperhost] = useState(false);
-const [selectedAmenities, setSelectedAmenities] = useState(new Set());
+const [location, setLocation] = useState(restored.location);
+const [checkin, setCheckin] = useState(restored.checkin);
+const [checkout, setCheckout] = useState(restored.checkout);
+const [adults, setAdults] = useState(restored.adults);
+const [children, setChildren] = useState(restored.children);
+const [infants, setInfants] = useState(restored.infants);
+const [pets, setPets] = useState(restored.pets);
+const [roomTypes, setRoomTypes] = useState(restored.roomTypes);
+const [l2PropertyTypes, setL2PropertyTypes] = useState(restored.l2PropertyTypes);
+const [propertyTypeIds, setPropertyTypeIds] = useState(restored.propertyTypeIds);
+const [priceMin, setPriceMin] = useState(restored.priceMin);
+const [priceMax, setPriceMax] = useState(restored.priceMax);
+const [minBedrooms, setMinBedrooms] = useState(restored.minBedrooms);
+const [minBeds, setMinBeds] = useState(restored.minBeds);
+const [minBathrooms, setMinBathrooms] = useState(restored.minBathrooms);
+const [superhost, setSuperhost] = useState(restored.superhost);
+const [selectedAmenities, setSelectedAmenities] = useState(() => new Set(restored.selectedAmenities));
 const [amenitySearch, setAmenitySearch] = useState("");
 const [copied, setCopied] = useState(false);
 const [expandedCats, setExpandedCats] = useState(new Set());
-const [customCodes, setCustomCodes] = useState("");
-const [categoryTags, setCategoryTags] = useState("");
+const [customCodes, setCustomCodes] = useState(restored.customCodes);
+const [categoryTags, setCategoryTags] = useState(restored.categoryTags);
+const [confirmClear, setConfirmClear] = useState(false);
+const clearTimer = useRef(null);
 const urlRef = useRef(null);
 const copyTimer = useRef(null);
 
-useEffect(() => () => clearTimeout(copyTimer.current), []);
+useEffect(() => () => {
+clearTimeout(copyTimer.current);
+clearTimeout(clearTimer.current);
+}, []);
+
+// Every setter below is a plain useState, so the persisted fields are gathered here.
+const persisted = {
+location, checkin, checkout, adults, children, infants, pets,
+roomTypes, l2PropertyTypes, propertyTypeIds, priceMin, priceMax,
+minBedrooms, minBeds, minBathrooms, superhost,
+selectedAmenities: [...selectedAmenities], customCodes, categoryTags,
+};
+
+// Deliberately no dependency array. A hand-listed one over nineteen fields is exactly
+// how a save silently stops covering a newly added field; running after every render
+// cannot drift. The serialised snapshot is compared instead, which skips the renders
+// that don't touch persisted state — amenity search, category expansion, the copy
+// button — without a debounce, and so without a window where an edit is unsaved.
+const lastSaved = useRef(null);
+useEffect(() => {
+const snapshot = JSON.stringify(persisted);
+if (snapshot === lastSaved.current) return;
+lastSaved.current = snapshot;
+saveForm(persisted);
+});
+
+const resetForm = () => {
+setLocation(DEFAULTS.location);
+setCheckin(DEFAULTS.checkin);
+setCheckout(DEFAULTS.checkout);
+setAdults(DEFAULTS.adults);
+setChildren(DEFAULTS.children);
+setInfants(DEFAULTS.infants);
+setPets(DEFAULTS.pets);
+setRoomTypes(DEFAULTS.roomTypes);
+setL2PropertyTypes(DEFAULTS.l2PropertyTypes);
+setPropertyTypeIds(DEFAULTS.propertyTypeIds);
+setPriceMin(DEFAULTS.priceMin);
+setPriceMax(DEFAULTS.priceMax);
+setMinBedrooms(DEFAULTS.minBedrooms);
+setMinBeds(DEFAULTS.minBeds);
+setMinBathrooms(DEFAULTS.minBathrooms);
+setSuperhost(DEFAULTS.superhost);
+setSelectedAmenities(new Set(DEFAULTS.selectedAmenities));
+setCustomCodes(DEFAULTS.customCodes);
+setCategoryTags(DEFAULTS.categoryTags);
+setAmenitySearch("");
+setExpandedCats(new Set());
+};
+
+// Two-step rather than a modal: clearing throws away a filled form with no undo, and
+// the button sits next to controls people click often.
+const onClearClick = () => {
+clearTimeout(clearTimer.current);
+if (!confirmClear) {
+setConfirmClear(true);
+clearTimer.current = setTimeout(() => setConfirmClear(false), 3000);
+return;
+}
+setConfirmClear(false);
+resetForm();
+};
 
 const toggleAmenity = (id) => {
 setSelectedAmenities(prev => {
@@ -97,8 +205,17 @@ const amenityCodes = useMemo(
 
 const form = {
 location, checkin, checkout, adults, children, infants, pets,
-roomTypes, propertyTypes, priceMin, priceMax, minBedrooms, minBeds, minBathrooms,
+roomTypes, l2PropertyTypes, propertyTypeIds, priceMin, priceMax, minBedrooms, minBeds, minBathrooms,
 superhost, amenityCodes, categoryTags: parsedCategoryTags.valid,
+};
+
+// Pills write through the same text field the user can type into, so the field stays
+// the single source of truth. Tokens it couldn't parse are preserved rather than
+// silently dropped when a pill is clicked.
+const toggleCategoryTag = (id) => {
+const { valid, invalid } = parsedCategoryTags;
+const next = valid.includes(id) ? valid.filter(v => v !== id) : [...valid, id];
+setCategoryTags([...next, ...invalid].join(", "));
 };
 
 // Cheap enough to run per render; memoizing would need a hand-maintained dep array
@@ -111,13 +228,31 @@ const warnings = validateSearch(form, today);
 
 const nights = nightsBetween(checkin, checkout);
 const checkoutMin = addDays(checkin || today, 1);
+const activePreset = matchingStayPreset(checkin, checkout);
+const summary = staySummary(checkin, checkout);
 
-// Moving check-in past the existing check-out would leave an invalid range, so shift
-// check-out along and keep the trip the same length. Moving check-in *earlier* just
-// extends the stay, which is a legitimate edit — leave it alone.
+// A preset with no check-in yet anchors to today, so one click gives a usable range.
+const applyPreset = (preset) => {
+const from = checkin || today;
+const next = applyStayPreset(from, preset);
+if (!next) return; // outside the representable date range
+setCheckin(from);
+setCheckout(next);
+};
+
+// With a preset active, "1 month" has to keep meaning a month in whichever direction
+// check-in moves. Otherwise: moving check-in past check-out would leave an invalid
+// range, so shift check-out and keep the trip the same length — moving it earlier
+// just extends the stay, which is a legitimate edit, so leave it alone.
 const onCheckinChange = (value) => {
 setCheckin(value);
-if (!value || !checkout || checkout > value) return;
+if (!value) return;
+if (activePreset) {
+const next = applyStayPreset(value, activePreset);
+if (next) setCheckout(next);
+return;
+}
+if (!checkout || checkout > value) return;
 setCheckout(addDays(value, nights ?? 1));
 };
 
@@ -143,21 +278,26 @@ return (
 maxWidth: 720, margin: "0 auto", padding: "24px 16px 120px 16px", color: "#222" }}>
 
 <div style={{ marginBottom: 28 }}>
+<div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:12}}>
 <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 6px 0", letterSpacing: "-0.3px" }}>
 Airbnb Advanced Search Builder
 </h1>
-<p style={{ fontSize: 13, color: "#717171", margin: 0, lineHeight: 1.5 }}>
-{AMENITIES.length} amenity codes, plus property types, superhost, and other params Airbnb doesn't fully expose.
-</p>
+<button onClick={onClearClick}
+title="Reset every field and forget the saved form"
+style={{background:"none",border:"none",color:confirmClear?"#B3261E":"#999",fontSize:12,
+fontWeight:confirmClear?600:400,cursor:"pointer",whiteSpace:"nowrap",padding:"4px 0"}}>
+{confirmClear ? "Confirm clear" : "Clear form"}
+</button>
+</div>
 </div>
 
 <Section title="Location">
 <input type="text" placeholder="e.g. Catskills--New-York or United-States"
 value={location} onChange={e => setLocation(e.target.value)} style={inputStyle} />
-<p style={hintStyle}>Match the format Airbnb uses in its URLs. Dashes for spaces, double dashes for commas. Pasting a full Airbnb search URL works too.</p>
+<p style={hintStyle}>Match the format Airbnb uses in its URLs. Pasting a full Airbnb search URL works too.</p>
 </Section>
 
-<Section title={<span>Dates{nights && <span style={{fontWeight:400,fontSize:13,color:"#717171",marginLeft:8}}>{nights} night{nights === 1 ? "" : "s"}</span>}</span>}>
+<Section title={<span>Dates{summary && <span style={{fontWeight:400,fontSize:13,color:"#717171",marginLeft:8}}>{summary}</span>}</span>}>
 <div style={{ display: "flex", gap: 12 }}>
 <Labeled label="Check-in">
 <input type="date" min={today} value={checkin}
@@ -168,12 +308,21 @@ onChange={e => onCheckinChange(e.target.value)} style={inputStyle} />
 onChange={e => setCheckout(e.target.value)} style={inputStyle} />
 </Labeled>
 </div>
+<div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",marginTop:10}}>
+{STAY_PRESETS.map(p => (
+<button key={p.label} onClick={() => applyPreset(p)}
+title={checkin ? `Check-out ${applyStayPreset(checkin, p)}` : `From today`}
+style={activePreset === p ? chipOnStyle : chipOffStyle}>
+{p.label}
+</button>
+))}
 {(checkin || checkout) && (
 <button onClick={() => { setCheckin(""); setCheckout(""); }}
-style={{background:"none",border:"none",color:"#FF5A5F",fontSize:12,cursor:"pointer",padding:"6px 0 0 0"}}>
+style={{background:"none",border:"none",color:"#FF5A5F",fontSize:12,cursor:"pointer",padding:"4px 0",marginLeft:4}}>
 Clear dates
 </button>
 )}
+</div>
 </Section>
 
 <Section title="Guests">
@@ -189,8 +338,19 @@ Clear dates
 </Section>
 
 <Section title="Property type">
-<ChipRow items={PROPERTY_TYPES} selected={propertyTypes} toggle={v => toggleSet(v, propertyTypes, setPropertyTypes)} />
-<p style={hintStyle}>l2_property_type_ids: 1=House, 2=Guest House, 3=Apartment, 4=Hotel</p>
+<ChipRow items={PROPERTY_TYPES} selected={l2PropertyTypes} toggle={v => toggleSet(v, l2PropertyTypes, setL2PropertyTypes)} />
+<details style={{marginTop:12}}>
+<summary style={{fontSize:12,color:"#717171",cursor:"pointer",userSelect:"none"}}>
+{PROPERTY_TYPE_ITEMS.length} other specific property types
+{propertyTypeIds.length > 0 && ` — ${propertyTypeIds.length} selected`}
+</summary>
+<p style={{...hintStyle, marginBottom: 8}}>
+A separate parameter with its own numbering — combinable with the four above, but an
+id means different things in each.
+</p>
+<PillGrid items={PROPERTY_TYPE_ITEMS} selected={propertyTypeIds}
+toggle={v => toggleSet(v, propertyTypeIds, setPropertyTypeIds)} />
+</details>
 </Section>
 
 <Section title="Price & rooms">
@@ -214,22 +374,37 @@ Superhosts only
 </Section>
 
 <Section title="Category tags">
-<p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}>
-Airbnb's knowledge graph categories (removed from UI in April 2025, but the URL parameter <code style={{fontSize:11,background:"#f0f0f0",padding:"1px 4px",borderRadius:3}}>kg_and_tags[]=Tag:ID</code> still works). Only confirmed ID so far: 8175 = Farms.
-</p>
+{/* <p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}>
+Airbnb's knowledge graph categories (removed from UI in 2025, but the URL parameter <code style={{fontSize:11,background:"#f0f0f0",padding:"1px 4px",borderRadius:3}}>kg_and_tags[]=Tag:ID</code> still works). {CATEGORY_TAGS.length} IDs verified against Airbnb's own pages — hover a pill for its source.
+</p> */}
+<PillGrid items={CATEGORY_TAG_ITEMS} selected={parsedCategoryTags.valid} toggle={toggleCategoryTag} />
+<div style={{marginTop:12}}>
+<label style={labelStyle}>Tag IDs</label>
 <input type="text" placeholder="Enter tag IDs separated by commas, e.g. 8175"
 value={categoryTags} onChange={e => setCategoryTags(e.target.value)} style={inputStyle} />
 <RejectedTokens tokens={parsedCategoryTags.invalid} />
-<details style={{marginTop:8}}>
-<summary style={{fontSize:12,color:"#717171",cursor:"pointer",userSelect:"none"}}>Known category names (IDs not yet mapped)</summary>
-<p style={{fontSize:11,color:"#999",margin:"6px 0 0 0",lineHeight:1.8}}>
-Lakefront, National Parks, Chalets, Islands, Beach, Tiny Homes, OMG!, Camping, A-Frames, Design, Arctic, Amazing Pools, Treehouses, Surfing, Bed & Breakfasts, Caves, Tropical, Countryside, Earth Homes, Shared Homes, Luxe, <strong>Farms (8175)</strong>, Amazing Views, Castles, Skiing, Historical Homes, Mansions, Golfing, Cycladic Homes, Barns, Iconic Cities, Chef's Kitchens, Domes, Campers, Shepherd's Huts, Boats, Vineyards, Casas Particulares, Windmills, Kezhans, Houseboats, Minsus, Beachfront, Ryokans, Ski-in/out, Towers, Yurts, Desert, Off-the-grid, Containers, Grand Pianos, Creative Spaces, Trulli, Riads, Dammusos, Lake
+{/* <p style={hintStyle}>
+Airbnb ignores an ID it doesn't recognise — the search runs unfiltered rather than
+failing, so a wrong ID looks the same as no filter at all.
+</p> */}
+</div>
+<details style={{marginTop:14}}>
+<summary style={{fontSize:12,color:"#717171",cursor:"pointer",userSelect:"none"}}>
+{UNMAPPED_CATEGORIES.length} categories with unknown ID
+</summary>
+<p style={{...hintStyle, marginBottom: 8}}>
+Airbnb names these but exposes no tag ID, so there is nothing to put in the URL.
+Cabins, Chalets and Dammusos are reachable under Property type, Shepherd's Huts as “Hut”.
 </p>
+<PillGrid items={UNMAPPED_ITEMS} selected={[]} toggle={() => {}} />
 </details>
 </Section>
 
 <Section title={<span>Amenity filters{totalSelected > 0 && <span style={{fontWeight:400,fontSize:13,color:"#717171",marginLeft:8}}>{totalSelected} selected{hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}</span>}</span>}>
 <p style={{fontSize:12,color:"#717171",margin:"0 0 10px 0"}}><strong>All</strong> selected filters must be present on a listing for it to appear in results.</p>
+<PillGrid items={FAVORITE_ITEMS} selected={[...selectedAmenities]}
+toggle={toggleAmenity} />
+<div style={{height:12}} />
 <div style={{ display:"flex", gap:8, marginBottom:12, alignItems:"center" }}>
 <input type="text" placeholder="Search amenities or enter a code..."
 value={amenitySearch} onChange={e => setAmenitySearch(e.target.value)}
@@ -331,6 +506,20 @@ function RejectedTokens({tokens}) {
 if (tokens.length === 0) return null;
 return <p style={{...hintStyle,color:"#B3261E"}}>Ignored (not a positive whole number): {tokens.join(", ")}</p>;
 }
+// Dense variant of ChipRow for the long lists, matching the amenity chips. Disabled
+// items render as inert rather than being hidden, so the UI shows what exists without
+// offering a control that would silently do nothing.
+function PillGrid({items,selected,toggle}) {
+return <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+{items.map(i => {
+const on = selected.includes(i.value);
+return <button key={i.value} onClick={() => toggle(i.value)} disabled={i.disabled} title={i.title}
+style={i.disabled ? chipDisabledStyle : on ? chipOnStyle : chipOffStyle}>
+{i.label}
+</button>;
+})}
+</div>;
+}
 function ChipRow({items,selected,toggle}) {
 return <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
 {items.map(i=><button key={i.value} onClick={()=>toggle(i.value)} style={{
@@ -353,3 +542,4 @@ transition:"all 0.15s",lineHeight:1.3,display:"inline-flex",alignItems:"center",
 const chipOnStyle = {...chipBaseStyle,border:"1px solid #222",background:"#222",color:"#fff"};
 const chipOffStyle = {...chipBaseStyle,border:"1px solid #ddd",background:"#fff",color:"#484848"};
 const dotStyle = {display:"inline-block",width:6,height:6,borderRadius:3,background:"#FF5A5F",flexShrink:0};
+const chipDisabledStyle = {...chipBaseStyle,border:"1px dashed #ddd",background:"#fafafa",color:"#bbb",cursor:"not-allowed"};

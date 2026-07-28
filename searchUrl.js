@@ -7,6 +7,11 @@
 const SEARCH_BASE = "https://www.airbnb.com/s/";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+// room_types values ship pre-encoded from the data table, so they can't be checked
+// numerically. This rejects anything carrying URL structure — &, #, ?, = — which is
+// what an injected parameter needs.
+const SAFE_TOKEN = /^[A-Za-z0-9%._-]+$/;
+
 export const GUEST_LIMITS = { adults: 16, children: 16, infants: 5, pets: 5 };
 export const ROOM_MAX = 16;
 
@@ -66,6 +71,63 @@ export function addDays(date, days) {
   const year = result.getUTCFullYear();
   if (year < 0 || year > 9999) return null;
   return result.toISOString().slice(0, 10);
+}
+
+// Calendar months, not 30-day blocks: a month from Aug 1 is Sep 1 (31 nights) and a
+// month from Feb 1 is Mar 1 (28). Day-of-month clamps to the target month's last day,
+// so Jan 31 + 1 month is Feb 28, not the Mar 3 that Date.UTC(y, m+1, 31) rolls over to.
+export function addMonths(date, months) {
+  const iso = isoDate(date);
+  if (!iso) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  const anchor = new Date(Date.UTC(y, m - 1 + months, 1));
+  const ty = anchor.getUTCFullYear();
+  const tm = anchor.getUTCMonth();
+  const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  const result = new Date(Date.UTC(ty, tm, Math.min(d, lastDay)));
+  const year = result.getUTCFullYear();
+  if (year < 0 || year > 9999) return null;
+  return result.toISOString().slice(0, 10);
+}
+
+// Stay lengths offered as one-click pills. Months are calendar months; weeks are
+// exact night counts.
+export const STAY_PRESETS = [
+  { label: "1 week", days: 7 },
+  { label: "2 weeks", days: 14 },
+  { label: "1 month", months: 1 },
+  { label: "2 months", months: 2 },
+  { label: "3 months", months: 3 },
+];
+
+export function applyStayPreset(checkin, preset) {
+  if (!preset) return null;
+  return preset.months ? addMonths(checkin, preset.months) : addDays(checkin, preset.days);
+}
+
+// Derived rather than stored: with a preset held in state it could disagree with the
+// dates after any manual edit.
+export function matchingStayPreset(checkin, checkout) {
+  if (!isoDate(checkin) || !isoDate(checkout)) return null;
+  return STAY_PRESETS.find((p) => applyStayPreset(checkin, p) === checkout) ?? null;
+}
+
+// Airbnb designates a reservation of 28+ nights a "monthly stay" — installment
+// billing and long-stay cancellation terms (airbnb.com/help/article/2584). The
+// monthly *discount* is host-configured and optional, so this deliberately says
+// "monthly stay" and not "monthly rates": the designation is automatic, a cheaper
+// price is not.
+export const MONTHLY_MIN_NIGHTS = 28;
+
+// A preset's exact night count varies with the calendar — "1 month" is 28, 29, 30 or
+// 31 nights depending on where it starts — so naming the preset says more than
+// printing one of those four numbers as though it were the answer.
+export function staySummary(checkin, checkout) {
+  const nights = nightsBetween(checkin, checkout);
+  if (!nights) return null;
+  const preset = matchingStayPreset(checkin, checkout);
+  const head = preset ? preset.label : `${nights} night${nights === 1 ? "" : "s"}`;
+  return nights >= MONTHLY_MIN_NIGHTS ? `${head} · monthly stay` : head;
 }
 
 export function nightsBetween(checkin, checkout) {
@@ -207,18 +269,31 @@ export function buildSearchUrl(form) {
     pushIfPositive(key, form[key], GUEST_LIMITS[key]);
   }
 
-  for (const roomType of form.roomTypes ?? []) push("room_types%5B%5D", roomType);
+  // Array params were the one place values reached the URL unguarded. That was safe
+  // while they could only come from clicked controls, but they now load from
+  // localStorage, which is user-editable and may hold an older build's shape. An
+  // unguarded element injects parameters: "1&superhost=true" becomes two of them.
+  for (const roomType of form.roomTypes ?? []) {
+    if (SAFE_TOKEN.test(String(roomType))) push("room_types%5B%5D", roomType);
+  }
 
   pushIfPositive("min_bedrooms", form.minBedrooms, ROOM_MAX);
   pushIfPositive("min_beds", form.minBeds, ROOM_MAX);
   pushIfPositive("min_bathrooms", form.minBathrooms, ROOM_MAX, positiveNumber);
 
-  for (const id of form.propertyTypes ?? []) push("l2_property_type_ids%5B%5D", id);
-  for (const id of form.amenityCodes ?? []) push("amenities%5B%5D", id);
+  // Two separate taxonomies with overlapping ids and different meanings — 4 is Hotel
+  // in l2_property_type_ids and Cabin in property_type_id. They are kept in distinct
+  // form fields so a value can never leak from one into the other.
+  for (const id of form.l2PropertyTypes ?? []) pushIfPositive("l2_property_type_ids%5B%5D", id);
+  for (const id of form.propertyTypeIds ?? []) pushIfPositive("property_type_id%5B%5D", id);
+  for (const id of form.amenityCodes ?? []) pushIfPositive("amenities%5B%5D", id);
 
   if (form.superhost) push("superhost", "true");
 
-  for (const id of form.categoryTags ?? []) push("kg_and_tags%5B%5D", `Tag%3A${id}`);
+  for (const id of form.categoryTags ?? []) {
+    const n = positiveInt(id);
+    if (n !== null) push("kg_and_tags%5B%5D", `Tag%3A${n}`);
+  }
 
   pushIfPositive("price_min", form.priceMin, undefined, positiveNumber);
   pushIfPositive("price_max", form.priceMax, undefined, positiveNumber);
